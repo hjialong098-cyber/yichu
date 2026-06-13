@@ -445,14 +445,6 @@ img {
   font-weight: 900;
 }
 
-.photo-picker::before {
-  content: "";
-  position: absolute;
-  inset: 16px;
-  border: 1px solid #ededed;
-  pointer-events: none;
-}
-
 .photo-picker img {
   width: 100%;
   height: 100%;
@@ -460,18 +452,42 @@ img {
   padding: 18px;
 }
 
-.photo-empty {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  width: min(100% - 36px, 360px);
-  gap: 18px;
-  text-align: center;
+.photo-picker:has(img)::before {
+  content: "";
+  position: absolute;
+  inset: 16px;
+  border: 1px solid #ededed;
+  pointer-events: none;
 }
 
-.photo-empty > span {
-  font-size: 13px;
+.photo-split {
+  position: absolute;
+  inset: 16px;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid #ededed;
+}
+
+.photo-choice {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  background: #fff;
+  color: #111;
+  font-size: 15px;
   font-weight: 900;
+  cursor: pointer;
+}
+
+.photo-choice-camera {
+  border-right: 1px solid #111;
+  background: #111;
+  color: #fff;
+}
+
+.photo-choice input {
+  display: none;
 }
 
 .photo-picker em {

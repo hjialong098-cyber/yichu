@@ -307,18 +307,15 @@ function App() {
                 {draft.imageDataUrl ? (
                   <img src={draft.imageDataUrl} alt="衣物预览" />
                 ) : (
-                  <div className="photo-empty">
-                    <span>{isCuttingOut ? "正在抠图" : "添加衣物照片"}</span>
-                    <div className="photo-actions in-frame">
-                      <label className="upload-button">
-                        拍照
-                        <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} disabled={isCuttingOut} />
-                      </label>
-                      <label className="upload-button">
-                        从相册上传
-                        <input type="file" accept="image/*" onChange={handleImageChange} disabled={isCuttingOut} />
-                      </label>
-                    </div>
+                  <div className="photo-split">
+                    <label className="photo-choice photo-choice-camera">
+                      <span>{isCuttingOut ? "正在抠图" : "拍照"}</span>
+                      <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} disabled={isCuttingOut} />
+                    </label>
+                    <label className="photo-choice photo-choice-upload">
+                      <span>上传</span>
+                      <input type="file" accept="image/*" onChange={handleImageChange} disabled={isCuttingOut} />
+                    </label>
                   </div>
                 )}
                 {isCuttingOut && <em>自动去除背景中</em>}
