@@ -304,20 +304,38 @@ function App() {
 
             <form className="item-form" onSubmit={handleAddItem}>
               <div className="photo-picker">
-                {draft.imageDataUrl ? <img src={draft.imageDataUrl} alt="衣物预览" /> : <span>{isCuttingOut ? "正在抠图" : "先添加衣物照片"}</span>}
+                {draft.imageDataUrl ? (
+                  <img src={draft.imageDataUrl} alt="衣物预览" />
+                ) : (
+                  <div className="photo-empty">
+                    <span>{isCuttingOut ? "正在抠图" : "添加衣物照片"}</span>
+                    <div className="photo-actions in-frame">
+                      <label className="upload-button">
+                        拍照
+                        <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} disabled={isCuttingOut} />
+                      </label>
+                      <label className="upload-button">
+                        从相册上传
+                        <input type="file" accept="image/*" onChange={handleImageChange} disabled={isCuttingOut} />
+                      </label>
+                    </div>
+                  </div>
+                )}
                 {isCuttingOut && <em>自动去除背景中</em>}
               </div>
 
+              {draft.imageDataUrl && (
               <div className="photo-actions">
                 <label className="upload-button">
-                  拍照
+                  重新拍照
                   <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} disabled={isCuttingOut} />
                 </label>
                 <label className="upload-button">
-                  从相册选择
+                  更换相册图
                   <input type="file" accept="image/*" onChange={handleImageChange} disabled={isCuttingOut} />
                 </label>
               </div>
+              )}
 
               <div className="photo-note">
                 上传后会自动去除背景，衣服颜色保留原图。
