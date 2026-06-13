@@ -28,10 +28,10 @@ const emptyDraft: DraftItem = {
 const canvasPieceSize = 118;
 const removeBackgroundConfig: RemoveBackgroundConfig = {
   device: "cpu",
-  model: "isnet_quint8",
+  model: "isnet_fp16",
   output: {
     format: "image/png",
-    quality: 0.8,
+    quality: 1,
   },
 };
 
