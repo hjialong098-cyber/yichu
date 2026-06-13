@@ -84,18 +84,18 @@ function App() {
     if (!file) return;
 
     setIsCuttingOut(true);
-    showNotice("正在自动抠图，首次可能较慢。");
+    showNotice("正在智能抠图，首次可能较慢。");
     try {
-      const cutoutBlob = await removeBackground(file, removeBackgroundConfig);
-      const imageDataUrl = await readFileAsDataUrl(cutoutBlob);
+      const imageDataUrl = await createGarmentCutoutDataUrl(file);
       setDraft((current) => ({ ...current, imageDataUrl }));
-      showNotice("背景已去除。");
+      showNotice("背景已去除，衣物原色已保留。");
     } catch {
       const imageDataUrl = await readFileAsDataUrl(file);
       setDraft((current) => ({ ...current, imageDataUrl }));
       showNotice("自动抠图失败，已保留原图。");
     } finally {
       setIsCuttingOut(false);
+      event.currentTarget.value = "";
     }
   }
 
@@ -303,11 +303,25 @@ function App() {
             </div>
 
             <form className="item-form" onSubmit={handleAddItem}>
-              <label className="photo-picker">
-                {draft.imageDataUrl ? <img src={draft.imageDataUrl} alt="衣物预览" /> : <span>{isCuttingOut ? "正在抠图" : "拍照或上传"}</span>}
+              <div className="photo-picker">
+                {draft.imageDataUrl ? <img src={draft.imageDataUrl} alt="衣物预览" /> : <span>{isCuttingOut ? "正在抠图" : "先添加衣物照片"}</span>}
                 {isCuttingOut && <em>自动去除背景中</em>}
-                <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} disabled={isCuttingOut} />
-              </label>
+              </div>
+
+              <div className="photo-actions">
+                <label className="upload-button">
+                  拍照
+                  <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} disabled={isCuttingOut} />
+                </label>
+                <label className="upload-button">
+                  从相册选择
+                  <input type="file" accept="image/*" onChange={handleImageChange} disabled={isCuttingOut} />
+                </label>
+              </div>
+
+              <div className="photo-note">
+                上传后会自动去除背景，衣服颜色保留原图。
+              </div>
 
               <div className="form-grid">
                 <label>
@@ -455,6 +469,162 @@ function EmptyState({ title, text }: { title: string; text: string }) {
       <p>{text}</p>
     </div>
   );
+}
+
+async function createGarmentCutoutDataUrl(file: File): Promise<string> {
+  const cutoutBlob = await removeBackground(file, removeBackgroundConfig);
+  return refineCutoutDataUrl(cutoutBlob);
+}
+
+async function refineCutoutDataUrl(blob: Blob): Promise<string> {
+  const rawDataUrl = await readFileAsDataUrl(blob);
+  const image = await loadImage(rawDataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return rawDataUrl;
+
+  context.drawImage(image, 0, 0);
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const cropBox = keepLargestGarmentMask(imageData);
+  if (!cropBox) return rawDataUrl;
+
+  context.putImageData(imageData, 0, 0);
+
+  const cropCanvas = document.createElement("canvas");
+  cropCanvas.width = cropBox.width;
+  cropCanvas.height = cropBox.height;
+
+  const cropContext = cropCanvas.getContext("2d");
+  if (!cropContext) return canvas.toDataURL("image/png");
+
+  cropContext.drawImage(
+    canvas,
+    cropBox.x,
+    cropBox.y,
+    cropBox.width,
+    cropBox.height,
+    0,
+    0,
+    cropBox.width,
+    cropBox.height,
+  );
+
+  return cropCanvas.toDataURL("image/png");
+}
+
+function keepLargestGarmentMask(imageData: ImageData) {
+  const { width, height, data } = imageData;
+  const pixelCount = width * height;
+  const foreground = new Uint8Array(pixelCount);
+  const labels = new Int32Array(pixelCount);
+  const stack = new Int32Array(pixelCount);
+  const alphaThreshold = 22;
+  const strongAlphaThreshold = 46;
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    foreground[pixel] = data[pixel * 4 + 3] > alphaThreshold ? 1 : 0;
+  }
+
+  let label = 0;
+  let largestLabel = 0;
+  let largestCount = 0;
+
+  for (let start = 0; start < pixelCount; start += 1) {
+    if (!foreground[start] || labels[start]) continue;
+
+    label += 1;
+    let count = 0;
+    let stackSize = 1;
+    stack[0] = start;
+    labels[start] = label;
+
+    while (stackSize > 0) {
+      const current = stack[--stackSize];
+      count += 1;
+      const x = current % width;
+
+      if (x > 0) stackSize = pushForegroundNeighbor(current - 1, label, foreground, labels, stack, stackSize);
+      if (x < width - 1) stackSize = pushForegroundNeighbor(current + 1, label, foreground, labels, stack, stackSize);
+      if (current >= width) stackSize = pushForegroundNeighbor(current - width, label, foreground, labels, stack, stackSize);
+      if (current < pixelCount - width) stackSize = pushForegroundNeighbor(current + width, label, foreground, labels, stack, stackSize);
+    }
+
+    if (count > largestCount) {
+      largestCount = count;
+      largestLabel = label;
+    }
+  }
+
+  if (!largestLabel) return null;
+
+  let minX = width;
+  let minY = height;
+  let maxX = 0;
+  let maxY = 0;
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const alphaIndex = pixel * 4 + 3;
+    if (labels[pixel] !== largestLabel) {
+      data[alphaIndex] = 0;
+      continue;
+    }
+
+    const alpha = data[alphaIndex];
+    if (alpha >= strongAlphaThreshold) {
+      data[alphaIndex] = 255;
+    } else {
+      data[alphaIndex] = Math.round(((alpha - alphaThreshold) / (strongAlphaThreshold - alphaThreshold)) * 255);
+    }
+
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  const padding = Math.max(8, Math.round(Math.max(width, height) * 0.012));
+  const x = Math.max(0, minX - padding);
+  const y = Math.max(0, minY - padding);
+  const right = Math.min(width - 1, maxX + padding);
+  const bottom = Math.min(height - 1, maxY + padding);
+
+  return {
+    x,
+    y,
+    width: right - x + 1,
+    height: bottom - y + 1,
+  };
+}
+
+function pushForegroundNeighbor(
+  pixel: number,
+  label: number,
+  foreground: Uint8Array,
+  labels: Int32Array,
+  stack: Int32Array,
+  stackSize: number,
+) {
+  if (foreground[pixel] && !labels[pixel]) {
+    labels[pixel] = label;
+    stack[stackSize] = pixel;
+    return stackSize + 1;
+  }
+
+  return stackSize;
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("图片读取失败"));
+    image.src = src;
+  });
 }
 
 function readFileAsDataUrl(file: Blob): Promise<string> {

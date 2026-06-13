@@ -472,9 +472,40 @@ img {
   font-style: normal;
 }
 
-.photo-picker input,
+.upload-button input,
 .hidden-input {
   display: none;
+}
+
+.photo-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.upload-button {
+  display: grid;
+  min-height: 42px;
+  place-items: center;
+  border: 1px solid #111;
+  background: #fff;
+  color: #111;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.upload-button:first-child {
+  background: #111;
+  color: #fff;
+}
+
+.photo-note {
+  margin-top: 10px;
+  color: #777;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .form-grid {
