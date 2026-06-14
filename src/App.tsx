@@ -285,7 +285,7 @@ function App() {
                     setMovingPieceId(null);
                   }}
                 >
-                  <img src={piece.item.imageDataUrl} alt={piece.item.name} />
+                  <img src={piece.item.imageDataUrl} alt={piece.item.name} draggable={false} />
                   <button aria-label={`移除${piece.item.name}`} onClick={() => removePiece(piece.id)}>×</button>
                 </div>
               ))}
@@ -436,7 +436,7 @@ function ItemGrid({
       {items.map((item) => (
         <article className="item-card" key={item.id}>
           <button className="item-image-button" draggable={Boolean(onDragStart)} onDragStart={(event) => onDragStart?.(item, event)} onClick={() => onPick(item)}>
-            <img src={item.imageDataUrl} alt={item.name} />
+            <img src={item.imageDataUrl} alt={item.name} draggable={false} />
           </button>
           <div className="item-meta">
             <strong>{item.name}</strong>
@@ -470,7 +470,7 @@ function OutfitCard({ outfit, items, onDelete }: { outfit: Outfit; items: Wardro
       </div>
       <div className="outfit-thumbs">
         {selectedItems.map((item) => (
-          <img key={item.id} src={item.imageDataUrl} alt={item.name} />
+          <img key={item.id} src={item.imageDataUrl} alt={item.name} draggable={false} />
         ))}
       </div>
     </article>
@@ -536,8 +536,8 @@ function keepLargestGarmentMask(imageData: ImageData) {
   const foreground = new Uint8Array(pixelCount);
   const labels = new Int32Array(pixelCount);
   const stack = new Int32Array(pixelCount);
-  const alphaThreshold = 22;
-  const strongAlphaThreshold = 46;
+  const alphaThreshold = 58;
+  const strongAlphaThreshold = 126;
 
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     foreground[pixel] = data[pixel * 4 + 3] > alphaThreshold ? 1 : 0;
@@ -579,28 +579,69 @@ function keepLargestGarmentMask(imageData: ImageData) {
   let minY = height;
   let maxX = 0;
   let maxY = 0;
+  let luminanceTotal = 0;
+  let luminanceCount = 0;
 
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const alphaIndex = pixel * 4 + 3;
-    if (labels[pixel] !== largestLabel) {
-      data[alphaIndex] = 0;
-      continue;
-    }
-
     const alpha = data[alphaIndex];
-    if (alpha >= strongAlphaThreshold) {
-      data[alphaIndex] = 255;
-    } else {
-      data[alphaIndex] = Math.round(((alpha - alphaThreshold) / (strongAlphaThreshold - alphaThreshold)) * 255);
-    }
-
+    if (labels[pixel] !== largestLabel || alpha <= alphaThreshold) continue;
     const x = pixel % width;
     const y = Math.floor(pixel / width);
     minX = Math.min(minX, x);
     minY = Math.min(minY, y);
     maxX = Math.max(maxX, x);
     maxY = Math.max(maxY, y);
+
+    if (alpha >= strongAlphaThreshold) {
+      const colorIndex = pixel * 4;
+      luminanceTotal += getLuminance(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
+      luminanceCount += 1;
+    }
   }
+
+  const averageLuminance = luminanceCount ? luminanceTotal / luminanceCount : 255;
+  const isDarkGarment = averageLuminance < 115;
+  const garmentHeight = Math.max(1, maxY - minY + 1);
+  const garmentTop = minY;
+  minX = width;
+  minY = height;
+  maxX = 0;
+  maxY = 0;
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const colorIndex = pixel * 4;
+    const alphaIndex = colorIndex + 3;
+    const alpha = data[alphaIndex];
+
+    if (labels[pixel] !== largestLabel || alpha <= alphaThreshold) {
+      data[alphaIndex] = 0;
+      continue;
+    }
+
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    const luminance = getLuminance(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
+    const saturation = getSaturation(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
+    const lowerHalf = y > garmentTop + garmentHeight * 0.48;
+    const likelyLightBackground = isDarkGarment && lowerHalf && luminance > 112 && saturation < 0.42;
+
+    if (likelyLightBackground) {
+      data[alphaIndex] = 0;
+    } else if (alpha >= strongAlphaThreshold) {
+      data[alphaIndex] = 255;
+    } else {
+      data[alphaIndex] = Math.round(((alpha - alphaThreshold) / (strongAlphaThreshold - alphaThreshold)) * 255);
+    }
+
+    if (data[alphaIndex] === 0) continue;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  if (minX > maxX || minY > maxY) return null;
 
   const padding = Math.max(8, Math.round(Math.max(width, height) * 0.012));
   const x = Math.max(0, minX - padding);
@@ -631,6 +672,16 @@ function pushForegroundNeighbor(
   }
 
   return stackSize;
+}
+
+function getLuminance(red: number, green: number, blue: number) {
+  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+}
+
+function getSaturation(red: number, green: number, blue: number) {
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  return max === 0 ? 0 : (max - min) / max;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {

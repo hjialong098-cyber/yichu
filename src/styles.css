@@ -407,7 +407,16 @@ img {
   height: 118px;
   object-fit: contain;
   background: transparent;
-  filter: drop-shadow(0 16px 20px rgba(0, 0, 0, 0.18));
+  pointer-events: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.item-image-button img,
+.outfit-thumbs img,
+.photo-picker img {
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .canvas-piece button {
