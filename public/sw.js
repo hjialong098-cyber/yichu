@@ -1,4 +1,4 @@
-const CACHE_NAME = "yida-v4";
+const CACHE_NAME = "yida-v5";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",

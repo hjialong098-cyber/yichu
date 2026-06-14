@@ -80,6 +80,7 @@ function App() {
   }
 
   async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -95,7 +96,7 @@ function App() {
       showNotice("自动抠图失败，已保留原图。");
     } finally {
       setIsCuttingOut(false);
-      event.currentTarget.value = "";
+      input.value = "";
     }
   }
 
@@ -536,8 +537,8 @@ function keepLargestGarmentMask(imageData: ImageData) {
   const foreground = new Uint8Array(pixelCount);
   const labels = new Int32Array(pixelCount);
   const stack = new Int32Array(pixelCount);
-  const alphaThreshold = 58;
-  const strongAlphaThreshold = 126;
+  const alphaThreshold = 92;
+  const strongAlphaThreshold = 156;
 
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     foreground[pixel] = data[pixel * 4 + 3] > alphaThreshold ? 1 : 0;
@@ -579,8 +580,6 @@ function keepLargestGarmentMask(imageData: ImageData) {
   let minY = height;
   let maxX = 0;
   let maxY = 0;
-  let luminanceTotal = 0;
-  let luminanceCount = 0;
 
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const alphaIndex = pixel * 4 + 3;
@@ -592,19 +591,9 @@ function keepLargestGarmentMask(imageData: ImageData) {
     minY = Math.min(minY, y);
     maxX = Math.max(maxX, x);
     maxY = Math.max(maxY, y);
-
-    if (alpha >= strongAlphaThreshold) {
-      const colorIndex = pixel * 4;
-      luminanceTotal += getLuminance(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
-      luminanceCount += 1;
-    }
   }
 
-  const averageLuminance = luminanceCount ? luminanceTotal / luminanceCount : 255;
-  const isDarkGarment = averageLuminance < 115;
-  const garmentHeight = Math.max(1, maxY - minY + 1);
-  const garmentTop = minY;
-  const columnHemline = isDarkGarment ? getDarkGarmentHemline(labels, largestLabel, data, width, height, alphaThreshold) : null;
+  const mainBodyBottom = findMainBodyBottom(labels, largestLabel, data, width, minY, maxY, strongAlphaThreshold);
   minX = width;
   minY = height;
   maxX = 0;
@@ -622,13 +611,8 @@ function keepLargestGarmentMask(imageData: ImageData) {
 
     const x = pixel % width;
     const y = Math.floor(pixel / width);
-    const luminance = getLuminance(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
-    const saturation = getSaturation(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
-    const lowerHalf = y > garmentTop + garmentHeight * 0.48;
-    const likelyLightBackground = isDarkGarment && lowerHalf && luminance > 112 && saturation < 0.42;
-    const belowDetectedHem = columnHemline ? y > columnHemline[x] + 3 : false;
 
-    if (belowDetectedHem || likelyLightBackground) {
+    if (mainBodyBottom !== null && y > mainBodyBottom - 8) {
       data[alphaIndex] = 0;
     } else if (alpha >= strongAlphaThreshold) {
       data[alphaIndex] = 255;
@@ -645,6 +629,10 @@ function keepLargestGarmentMask(imageData: ImageData) {
 
   if (minX > maxX || minY > maxY) return null;
 
+  const visibleHeight = maxY - minY + 1;
+  const bottomEdgeTrim = Math.max(4, Math.round(visibleHeight * 0.018));
+  maxY = Math.max(minY, maxY - bottomEdgeTrim);
+
   const padding = Math.max(8, Math.round(Math.max(width, height) * 0.012));
   const x = Math.max(0, minX - padding);
   const y = Math.max(0, minY - padding);
@@ -657,6 +645,58 @@ function keepLargestGarmentMask(imageData: ImageData) {
     width: right - x + 1,
     height: bottom - y + 1,
   };
+}
+
+function findMainBodyBottom(
+  labels: Int32Array,
+  largestLabel: number,
+  data: Uint8ClampedArray,
+  width: number,
+  minY: number,
+  maxY: number,
+  strongAlphaThreshold: number,
+) {
+  const height = maxY - minY + 1;
+  if (height < 80) return null;
+
+  const rowCounts = new Int32Array(maxY + 1);
+  for (let y = minY; y <= maxY; y += 1) {
+    const rowStart = y * width;
+    for (let x = 0; x < width; x += 1) {
+      const pixel = rowStart + x;
+      if (labels[pixel] === largestLabel && data[pixel * 4 + 3] >= strongAlphaThreshold) {
+        rowCounts[y] += 1;
+      }
+    }
+  }
+
+  const smoothCounts = new Float32Array(maxY + 1);
+  let strongestRowCount = 0;
+  for (let y = minY; y <= maxY; y += 1) {
+    let sum = 0;
+    let count = 0;
+    for (let offset = -4; offset <= 4; offset += 1) {
+      const row = y + offset;
+      if (row < minY || row > maxY) continue;
+      sum += rowCounts[row];
+      count += 1;
+    }
+    const smoothed = sum / count;
+    smoothCounts[y] = smoothed;
+    strongestRowCount = Math.max(strongestRowCount, smoothed);
+  }
+
+  const minimumMainRowCount = Math.max(24, strongestRowCount * 0.62);
+  let mainBottom = maxY;
+  for (let y = maxY; y >= minY; y -= 1) {
+    if (smoothCounts[y] >= minimumMainRowCount) {
+      mainBottom = y;
+      break;
+    }
+  }
+
+  const trailingHeight = maxY - mainBottom;
+  return trailingHeight > Math.max(8, height * 0.025) ? mainBottom : null;
 }
 
 function pushForegroundNeighbor(
@@ -674,64 +714,6 @@ function pushForegroundNeighbor(
   }
 
   return stackSize;
-}
-
-function getDarkGarmentHemline(
-  labels: Int32Array,
-  garmentLabel: number,
-  data: Uint8ClampedArray,
-  width: number,
-  height: number,
-  alphaThreshold: number,
-) {
-  const rawHemline = new Int32Array(width);
-  rawHemline.fill(-1);
-
-  for (let pixel = 0; pixel < width * height; pixel += 1) {
-    if (labels[pixel] !== garmentLabel) continue;
-
-    const colorIndex = pixel * 4;
-    const alpha = data[colorIndex + 3];
-    if (alpha <= alphaThreshold) continue;
-
-    const luminance = getLuminance(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
-    const saturation = getSaturation(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
-    const isDarkFabric = luminance < 92;
-    const isGreenPrint = data[colorIndex + 1] > data[colorIndex] * 1.12 && data[colorIndex + 1] > data[colorIndex + 2] * 1.08 && saturation > 0.18;
-
-    if (!isDarkFabric && !isGreenPrint) continue;
-
-    const x = pixel % width;
-    const y = Math.floor(pixel / width);
-    rawHemline[x] = Math.max(rawHemline[x], y);
-  }
-
-  const smoothedHemline = new Int32Array(width);
-  const radius = Math.max(8, Math.round(width * 0.018));
-
-  for (let x = 0; x < width; x += 1) {
-    let maxY = -1;
-    const left = Math.max(0, x - radius);
-    const right = Math.min(width - 1, x + radius);
-
-    for (let sampleX = left; sampleX <= right; sampleX += 1) {
-      maxY = Math.max(maxY, rawHemline[sampleX]);
-    }
-
-    smoothedHemline[x] = maxY;
-  }
-
-  return smoothedHemline;
-}
-
-function getLuminance(red: number, green: number, blue: number) {
-  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
-}
-
-function getSaturation(red: number, green: number, blue: number) {
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  return max === 0 ? 0 : (max - min) / max;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
