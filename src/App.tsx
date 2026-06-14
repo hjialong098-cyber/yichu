@@ -604,6 +604,7 @@ function keepLargestGarmentMask(imageData: ImageData) {
   const isDarkGarment = averageLuminance < 115;
   const garmentHeight = Math.max(1, maxY - minY + 1);
   const garmentTop = minY;
+  const columnHemline = isDarkGarment ? getDarkGarmentHemline(labels, largestLabel, data, width, height, alphaThreshold) : null;
   minX = width;
   minY = height;
   maxX = 0;
@@ -625,8 +626,9 @@ function keepLargestGarmentMask(imageData: ImageData) {
     const saturation = getSaturation(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
     const lowerHalf = y > garmentTop + garmentHeight * 0.48;
     const likelyLightBackground = isDarkGarment && lowerHalf && luminance > 112 && saturation < 0.42;
+    const belowDetectedHem = columnHemline ? y > columnHemline[x] + 3 : false;
 
-    if (likelyLightBackground) {
+    if (belowDetectedHem || likelyLightBackground) {
       data[alphaIndex] = 0;
     } else if (alpha >= strongAlphaThreshold) {
       data[alphaIndex] = 255;
@@ -672,6 +674,54 @@ function pushForegroundNeighbor(
   }
 
   return stackSize;
+}
+
+function getDarkGarmentHemline(
+  labels: Int32Array,
+  garmentLabel: number,
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  alphaThreshold: number,
+) {
+  const rawHemline = new Int32Array(width);
+  rawHemline.fill(-1);
+
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    if (labels[pixel] !== garmentLabel) continue;
+
+    const colorIndex = pixel * 4;
+    const alpha = data[colorIndex + 3];
+    if (alpha <= alphaThreshold) continue;
+
+    const luminance = getLuminance(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
+    const saturation = getSaturation(data[colorIndex], data[colorIndex + 1], data[colorIndex + 2]);
+    const isDarkFabric = luminance < 92;
+    const isGreenPrint = data[colorIndex + 1] > data[colorIndex] * 1.12 && data[colorIndex + 1] > data[colorIndex + 2] * 1.08 && saturation > 0.18;
+
+    if (!isDarkFabric && !isGreenPrint) continue;
+
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    rawHemline[x] = Math.max(rawHemline[x], y);
+  }
+
+  const smoothedHemline = new Int32Array(width);
+  const radius = Math.max(8, Math.round(width * 0.018));
+
+  for (let x = 0; x < width; x += 1) {
+    let maxY = -1;
+    const left = Math.max(0, x - radius);
+    const right = Math.min(width - 1, x + radius);
+
+    for (let sampleX = left; sampleX <= right; sampleX += 1) {
+      maxY = Math.max(maxY, rawHemline[sampleX]);
+    }
+
+    smoothedHemline[x] = maxY;
+  }
+
+  return smoothedHemline;
 }
 
 function getLuminance(red: number, green: number, blue: number) {
